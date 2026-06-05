@@ -486,7 +486,7 @@ export default function PreConsultIA() {
                         <Btn full variant="soft" icon={copied ? Check : Copy} onClick={copySummary}>
                           {copied ? "Copié !" : "Copier"}
                         </Btn>
-                        <Btn full variant="soft" icon={Share2} onClick={() => alert("POC : export PDF simulé.")}>Exporter</Btn>
+                        <Btn full variant="soft" icon={Share2} onClick={() => window.print()}>Exporter / PDF</Btn>
                       </div>
 
                       {/* Agent Rendez-vous */}
@@ -496,9 +496,15 @@ export default function PreConsultIA() {
                           <strong style={{ fontSize: 14 }}>Message de prise de rendez-vous</strong>
                         </div>
                         <pre style={{ whiteSpace: "pre-wrap", fontFamily: sans, fontSize: 13, lineHeight: 1.55, color: C.sub, margin: "0 0 12px", background: "#FBFDFC", padding: 12, borderRadius: 10, border: `1px solid ${C.line}` }}>{rdvMsg}</pre>
-                        <Btn full icon={ArrowRight} onClick={() => alert("POC : redirection vers la plateforme de rendez-vous (ex. Doctolib).")}>
-                          Aller à la plateforme de rendez-vous
+                        <Btn full icon={ArrowRight} onClick={() => {
+                          navigator.clipboard?.writeText(rdvMsg);
+                          window.open("https://www.doctolib.fr", "_blank", "noopener,noreferrer");
+                        }}>
+                          Prendre rendez-vous sur Doctolib
                         </Btn>
+                        <p style={{ fontSize: 11, color: C.sub, margin: "8px 0 0", lineHeight: 1.4, textAlign: "center" }}>
+                          Le message ci-dessus est copié automatiquement : collez-le lors de votre prise de rendez-vous.
+                        </p>
                       </div>
                     </div>
                   )}
