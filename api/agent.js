@@ -1,36 +1,22 @@
 // api/agent.js
-// Backend securise : recoit une demande de l'app, appelle l'API Anthropic
-// avec la cle secrete (jamais exposee au telephone), renvoie le texte.
-// La cle est lue depuis la variable d'environnement ANTHROPIC_API_KEY.
+// Backend securise : appelle l'API Anthropic avec la cle secrete cote serveur.
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    res.status(405).json({ error: "Methode non autorisee" });
-    return;
+    return res.status(405).json({ error: "Methode non autorisee" });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    res.status(500).json({ error: "Cle API non configuree sur le serveur." });
-    return;
+    return res.status(500).json({ error: "Cle API non configuree sur le serveur." });
   }
 
   try {
-    // Lecture robuste du corps de la requete (parfois deja parse, parfois non)
-    let body = req.body;
-    if (!body || typeof body === "string") {
-      const raw = await new Promise((resolve) => {
-        let data = "";
-        req.on("data", (chunk) => (data += chunk));
-        req.on("end", () => resolve(data));
-      });
-      try { body = JSON.parse(raw || "{}"); } catch { body = {}; }
-    }
-
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     const { system, content } = body;
+
     if (!system || !content) {
-      res.status(400).json({ error: "Requete incomplete." });
-      return;
+      return res.status(400).json({ error: "Requete incomplete." });
     }
 
     const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -51,8 +37,8 @@ export default async function handler(req, res) {
     const data = await r.json();
 
     if (!r.ok) {
-      res.status(r.status).json({ error: (data && data.error && data.error.message) || "Erreur API." });
-      return;
+      const msg = (data && data.error && data.error.message) || "Erreur API.";
+      return res.status(r.status).json({ error: msg });
     }
 
     const text = (data.content || [])
@@ -60,8 +46,8 @@ export default async function handler(req, res) {
       .filter(Boolean)
       .join("\n");
 
-    res.status(200).json({ text });
+    return res.status(200).json({ text });
   } catch (e) {
-    res.status(500).json({ error: "Erreur serveur: " + (e && e.message ? e.message : "inconnue") });
+    return res.status(500).json({ error: "Erreur serveur: " + (e && e.message ? e.message : "inconnue") });
   }
 }
