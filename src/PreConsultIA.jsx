@@ -48,10 +48,10 @@ function sanitize(text) {
 
 /* Construit la charge utile envoyée à l'IA : uniquement données médicales,
    jamais nom/prénom/téléphone/adresse. */
-function buildClinicalPayload(answers, lists) {
+function buildClinicalPayload(profil, answers, lists) {
   const clinical = {
-    age: answers.age || "non précisé",
-    sexe: answers.sexe || "non précisé",
+    age: profil.age || "non précisé",
+    sexe: profil.sexe || "non précisé",
     motif: sanitize(answers.motif),
     symptomes: sanitize(answers.symptomes),
     depuis: answers.depuis,
@@ -232,6 +232,7 @@ export default function PreConsultIA() {
   const [validated, setValidated] = useState(false);
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState("");
+  const [doctorEmail, setDoctorEmail] = useState("");
 
   function loadDemo() {
     setProfil({ initiales: DEMO.profil.initiales, age: DEMO.profil.age, sexe: DEMO.profil.sexe });
@@ -243,7 +244,7 @@ export default function PreConsultIA() {
   async function askPrecisions() {
     setLoadingQ(true); setErr("");
     try {
-      const payload = buildClinicalPayload(answers, { traitements, antecedents, allergies });
+      const payload = buildClinicalPayload(profil, answers, { traitements, antecedents, allergies });
       const res = await callAgent(PROMPTS.questionnaire, payload, true);
       setAiQuestions(res.questions || []);
     } catch (e) { setErr("L'agent questionnaire est indisponible. Vous pouvez continuer sans précisions."); }
@@ -257,7 +258,7 @@ export default function PreConsultIA() {
       const extra = Object.entries(aiAnswers)
         .filter(([, v]) => v && v.trim())
         .map(([q, v]) => `Q: ${aiQuestions[q]} R: ${sanitize(v)}`).join("\n");
-      const payload = buildClinicalPayload(answers, { traitements, antecedents, allergies })
+      const payload = buildClinicalPayload(profil, answers, { traitements, antecedents, allergies })
         + (extra ? `\n\nPrécisions complémentaires:\n${extra}` : "");
 
       const [s, v, r] = await Promise.all([
@@ -274,6 +275,18 @@ export default function PreConsultIA() {
     const text = `RÉSUMÉ PRÉ-CONSULTATION (préparé par le patient, validé)\n\n${summary}`;
     navigator.clipboard?.writeText(text);
     setCopied(true); setTimeout(() => setCopied(false), 1800);
+  }
+
+  function emailSummary() {
+    const sujet = "Résumé pré-consultation";
+    const corps =
+      "Bonjour,\n\nVoici le résumé que j'ai préparé en vue de notre consultation à l'aide de PreConsult IA. " +
+      "Ce résumé ne constitue pas un diagnostic.\n\n" +
+      summary +
+      "\n\nCordialement.";
+    const dest = doctorEmail.trim();
+    const url = `mailto:${encodeURIComponent(dest)}?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
+    window.location.href = url;
   }
 
   const profilOk = profil.age && profil.sexe;
@@ -436,15 +449,23 @@ export default function PreConsultIA() {
 
               {!loadingSummary && summary && (
                 <>
-                  {/* Agent Vérification */}
+                  {/* Agent Vérification — rappel doux côté patient */}
                   {verif && (verif.manquant?.length > 0 || verif.aVerifier?.length > 0) && (
-                    <div style={{ ...cardStyle, background: C.warnSoft, border: "1px solid #F6D9A8", marginBottom: 14 }}>
+                    <div style={{ ...cardStyle, background: C.brandSoft, border: "none", marginBottom: 14 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                        <AlertTriangle size={16} color={C.warn} />
-                        <strong style={{ fontSize: 14, color: "#7A4A12" }}>L'agent vérification a repéré des points</strong>
+                        <Sparkles size={16} color={C.brand} />
+                        <strong style={{ fontSize: 14, color: C.brandInk }}>Avant de finaliser, vous pourriez préciser…</strong>
                       </div>
-                      {verif.manquant?.map((m, i) => <PointLine key={"m" + i} text={m} tag="Manquant" />)}
-                      {verif.aVerifier?.map((m, i) => <PointLine key={"v" + i} text={m} tag="À vérifier" />)}
+                      <p style={{ fontSize: 12, color: C.sub, margin: "0 0 10px", lineHeight: 1.45 }}>
+                        Ces précisions sont facultatives. Elles peuvent aider votre médecin, mais vous pouvez tout à fait continuer sans.
+                      </p>
+                      {[...(verif.manquant || []), ...(verif.aVerifier || [])].map((m, i) => (
+                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 6 }}>
+                          <span style={{ color: C.brand, fontSize: 14, lineHeight: 1.4 }}>•</span>
+                          <span style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.4 }}>{m}</span>
+                        </div>
+                      ))}
+                      <Btn variant="ghost" icon={ChevronLeft} onClick={() => setScreen("quest")}>Compléter mes réponses</Btn>
                     </div>
                   )}
 
@@ -515,40 +536,55 @@ export default function PreConsultIA() {
 
               <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
                 <Btn variant="ghost" icon={ChevronLeft} onClick={() => setScreen("quest")}>Modifier</Btn>
-                <Btn full variant="ghost" icon={Stethoscope} onClick={() => setScreen("doctor")}>Vue médecin</Btn>
+                <Btn full variant="ghost" icon={Stethoscope} onClick={() => setScreen("doctor")}>Envoyer à mon médecin</Btn>
               </div>
             </section>
           )}
 
-          {/* ============ INTERFACE MÉDECIN ============ */}
+          {/* ============ ENVOYER À MON MÉDECIN ============ */}
           {screen === "doctor" && (
             <section>
-              <ScreenTitle icon={Stethoscope} title="Espace médecin" sub="Consultation des résumés validés par les patients." />
-              <div style={cardStyle}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <span style={{ fontSize: 12, color: C.sub }}>Résumés reçus</span>
-                  <span style={{ fontSize: 11, background: C.brandSoft, color: C.brandInk, padding: "3px 9px", borderRadius: 20, fontWeight: 600 }}>
-                    {validated && summary ? "1" : "0"} validé(s)
-                  </span>
-                </div>
-                {validated && summary ? (
-                  <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 14 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                      <strong style={{ fontSize: 14 }}>{profil.initiales || "Patient anonyme"} · {profil.age} ans · {profil.sexe}</strong>
-                      <span style={{ fontSize: 11, color: C.brand, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle2 size={13} /> validé</span>
+              <ScreenTitle icon={Stethoscope} title="Envoyer à mon médecin" sub="Transmettez votre résumé validé par email." />
+
+              {validated && summary ? (
+                <>
+                  <div style={cardStyle}>
+                    <p style={{ fontSize: 13, color: C.sub, margin: "0 0 14px", lineHeight: 1.5 }}>
+                      Deux étapes : téléchargez le PDF de votre résumé, puis ouvrez votre messagerie avec le texte déjà rédigé. Vous pourrez y joindre le PDF.
+                    </p>
+
+                    <Btn full variant="soft" icon={Share2} onClick={() => window.print()}>
+                      1. Télécharger le résumé en PDF
+                    </Btn>
+
+                    <div style={{ marginTop: 16 }}>
+                      <Field label="Email de votre médecin (facultatif)" type="text" value={doctorEmail} onChange={setDoctorEmail} placeholder="medecin@exemple.fr" hint="Laissez vide pour choisir le destinataire dans votre messagerie." />
                     </div>
-                    <pre style={{ whiteSpace: "pre-wrap", fontFamily: sans, fontSize: 12.5, lineHeight: 1.55, color: C.ink, margin: 0 }}>{summary}</pre>
+
+                    <Btn full icon={ArrowRight} onClick={emailSummary}>
+                      2. Préparer l'email
+                    </Btn>
                   </div>
-                ) : (
-                  <div style={{ textAlign: "center", padding: "30px 10px", color: C.sub }}>
+
+                  <div style={{ marginTop: 14 }}>
+                    <Disclaimer compact />
+                  </div>
+
+                  <p style={{ fontSize: 11, color: C.sub, marginTop: 14, lineHeight: 1.5, textAlign: "center" }}>
+                    <Lock size={11} style={{ verticalAlign: "-1px" }} /> Le résumé ne contient aucune donnée nominative envoyée à l'IA.
+                  </p>
+                </>
+              ) : (
+                <div style={cardStyle}>
+                  <div style={{ textAlign: "center", padding: "20px 10px", color: C.sub }}>
                     <FileText size={32} color={C.line} style={{ marginBottom: 8 }} />
-                    <p style={{ fontSize: 13.5, margin: 0 }}>Aucun résumé validé pour le moment.</p>
+                    <p style={{ fontSize: 13.5, margin: 0, lineHeight: 1.5 }}>
+                      Vous devez d'abord générer et valider votre résumé pour pouvoir l'envoyer.
+                    </p>
                   </div>
-                )}
-                <p style={{ fontSize: 11, color: C.sub, marginTop: 14, lineHeight: 1.5 }}>
-                  <Lock size={11} style={{ verticalAlign: "-1px" }} /> POC : données fictives, non nominatives, non persistées.
-                </p>
-              </div>
+                </div>
+              )}
+
               <div style={{ marginTop: 18 }}>
                 <Btn full variant="ghost" icon={ChevronLeft} onClick={() => setScreen(summary ? "summary" : "home")}>Retour</Btn>
               </div>
