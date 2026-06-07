@@ -258,8 +258,9 @@ export default function PreConsultIA() {
   const [allergies, setAllergies] = useState([]);
 
   const [aiQuestions, setAiQuestions] = useState([]);
-  const [selectedQ, setSelectedQ] = useState({}); // index -> bool (questions cochées)
+  const [selectedQ, setSelectedQ] = useState({}); // index -> bool (questions de vérif cochées)
   const [aiAnswers, setAiAnswers] = useState({});
+  const [verifAnswers, setVerifAnswers] = useState({}); // réponses aux questions de vérif cochées
   const [loadingQ, setLoadingQ] = useState(false);
 
   const [summary, setSummary] = useState("");
@@ -292,19 +293,28 @@ export default function PreConsultIA() {
 
   /* Agents Résumé + Vérification */
   async function generateSummary() {
-    setLoadingSummary(true); setErr(""); setValidated(false);
+    setLoadingSummary(true); setErr(""); setValidated(false); setChannel("");
     try {
       const extra = Object.entries(aiAnswers)
         .filter(([, v]) => v && v.trim())
         .map(([q, v]) => `Q: ${aiQuestions[q]} R: ${sanitize(v)}`).join("\n");
+
+      // Réponses aux questions de vérification cochées (régénération du résumé)
+      const verifList = verif ? [...(verif.manquant || []), ...(verif.aVerifier || [])] : [];
+      const extraVerif = Object.entries(verifAnswers)
+        .filter(([, v]) => v && v.trim())
+        .map(([i, v]) => `Q: ${verifList[i]} R: ${sanitize(v)}`).join("\n");
+
       const payload = buildClinicalPayload(profil, answers, { symptomes, traitements, antecedents, allergies })
-        + (extra ? `\n\nPrécisions complémentaires:\n${extra}` : "");
+        + (extra ? `\n\nPrécisions complémentaires:\n${extra}` : "")
+        + (extraVerif ? `\n\nRéponses complémentaires du patient:\n${extraVerif}` : "");
 
       const [s, v] = await Promise.all([
         callAgent(PROMPTS.resume, payload),
         callAgent(PROMPTS.verification, payload, true),
       ]);
       setSummary(s); setVerif(v);
+      setSelectedQ({}); setVerifAnswers({});
     } catch (e) { setErr("Une erreur est survenue lors de la génération. Réessayez."); }
     setLoadingSummary(false);
   }
@@ -369,7 +379,7 @@ export default function PreConsultIA() {
               <ScreenTitle icon={User} title="Profil patient" sub="Données minimales. Vos nom et coordonnées ne sont jamais envoyés à l'IA." />
               <div style={cardStyle}>
                 <Field label="Initiales (facultatif)" value={profil.initiales} onChange={(v) => setProfil({ ...profil, initiales: v })} placeholder="Ex. M. D." hint="Restez anonyme : pas de nom complet." />
-                <Field label="Âge" type="number" value={profil.age} onChange={(v) => setProfil({ ...profil, age: v })} placeholder="34" />
+                <Field label="Âge" type="number" value={profil.age} onChange={(v) => setProfil({ ...profil, age: v })} placeholder="Votre âge" />
                 <div style={{ marginBottom: 4 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Sexe</span>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -425,7 +435,7 @@ export default function PreConsultIA() {
                     {aiQuestions.length === 0 && !loadingQ && (
                       <>
                         <p style={{ fontSize: 13.5, color: C.sub, lineHeight: 1.5, marginTop: 0 }}>
-                          L'agent peut proposer des questions de précision. Vous choisirez ensuite celles auxquelles vous souhaitez répondre.
+                          L'agent peut proposer quelques questions pour mieux préparer votre consultation. Vous y répondez si vous le souhaitez.
                         </p>
                         <Btn full icon={Sparkles} onClick={askPrecisions}>Demander des précisions</Btn>
                       </>
@@ -435,19 +445,13 @@ export default function PreConsultIA() {
                     {aiQuestions.length > 0 && (
                       <>
                         <p style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.5, marginTop: 0, marginBottom: 10 }}>
-                          Cochez les questions qui vous semblent utiles, puis répondez-y. Tout est facultatif.
+                          Répondez aux questions qui vous concernent. Tout est facultatif.
                         </p>
                         {aiQuestions.map((q, i) => (
-                          <div key={i} style={{ marginBottom: 10, padding: 10, borderRadius: 12, border: `1.5px solid ${selectedQ[i] ? C.brand : C.line}`, background: selectedQ[i] ? C.brandSoft : "#fff" }}>
-                            <label style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
-                              <input type="checkbox" checked={!!selectedQ[i]} onChange={(e) => setSelectedQ({ ...selectedQ, [i]: e.target.checked })}
-                                style={{ marginTop: 2, width: 17, height: 17, accentColor: C.brand, flexShrink: 0 }} />
-                              <span style={{ fontSize: 13.5, fontWeight: 600, color: C.ink, lineHeight: 1.4 }}>{q}</span>
-                            </label>
-                            {selectedQ[i] && (
-                              <textarea rows={2} value={aiAnswers[i] || ""} onChange={(e) => setAiAnswers({ ...aiAnswers, [i]: e.target.value })}
-                                placeholder="Votre réponse…" style={{ ...inputStyle, marginTop: 8 }} />
-                            )}
+                          <div key={i} style={{ marginBottom: 14 }}>
+                            <span style={{ fontSize: 13.5, fontWeight: 600, display: "block", marginBottom: 6, color: C.ink }}>{q}</span>
+                            <textarea rows={2} value={aiAnswers[i] || ""} onChange={(e) => setAiAnswers({ ...aiAnswers, [i]: e.target.value })}
+                              placeholder="Votre réponse (facultatif)" style={inputStyle} />
                           </div>
                         ))}
                         <Btn variant="ghost" icon={Sparkles} onClick={askPrecisions}>Proposer d'autres questions</Btn>
@@ -500,25 +504,40 @@ export default function PreConsultIA() {
 
               {!loadingSummary && summary && (
                 <>
-                  {/* Agent Vérification — rappel doux côté patient */}
-                  {verif && (verif.manquant?.length > 0 || verif.aVerifier?.length > 0) && (
-                    <div style={{ ...cardStyle, background: C.brandSoft, border: "none", marginBottom: 14 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                        <Sparkles size={16} color={C.brand} />
-                        <strong style={{ fontSize: 14, color: C.brandInk }}>Avant de finaliser, vous pourriez préciser…</strong>
-                      </div>
-                      <p style={{ fontSize: 12, color: C.sub, margin: "0 0 10px", lineHeight: 1.45 }}>
-                        Ces précisions sont facultatives. Elles peuvent aider votre médecin, mais vous pouvez tout à fait continuer sans.
-                      </p>
-                      {[...(verif.manquant || []), ...(verif.aVerifier || [])].map((m, i) => (
-                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 6 }}>
-                          <span style={{ color: C.brand, fontSize: 14, lineHeight: 1.4 }}>•</span>
-                          <span style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.4 }}>{m}</span>
+                  {/* Agent Vérification — le patient choisit les questions à compléter */}
+                  {verif && (verif.manquant?.length > 0 || verif.aVerifier?.length > 0) && (() => {
+                    const verifList = [...(verif.manquant || []), ...(verif.aVerifier || [])];
+                    const hasAnswer = Object.values(verifAnswers).some((v) => v && v.trim());
+                    return (
+                      <div style={{ ...cardStyle, background: C.brandSoft, border: "none", marginBottom: 14 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                          <Sparkles size={16} color={C.brand} />
+                          <strong style={{ fontSize: 14, color: C.brandInk }}>Vous pouvez préciser certains points</strong>
                         </div>
-                      ))}
-                      <Btn variant="ghost" icon={ChevronLeft} onClick={() => setScreen("quest")}>Compléter mes réponses</Btn>
-                    </div>
-                  )}
+                        <p style={{ fontSize: 12, color: C.sub, margin: "0 0 12px", lineHeight: 1.45 }}>
+                          Cochez les questions auxquelles vous souhaitez répondre. Vos réponses seront ajoutées au résumé. Tout est facultatif.
+                        </p>
+                        {verifList.map((q, i) => (
+                          <div key={i} style={{ marginBottom: 8, padding: 10, borderRadius: 12, background: selectedQ[i] ? "#fff" : "transparent", border: `1.5px solid ${selectedQ[i] ? C.brand : "transparent"}` }}>
+                            <label style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
+                              <input type="checkbox" checked={!!selectedQ[i]} onChange={(e) => setSelectedQ({ ...selectedQ, [i]: e.target.checked })}
+                                style={{ marginTop: 2, width: 17, height: 17, accentColor: C.brand, flexShrink: 0 }} />
+                              <span style={{ fontSize: 12.5, fontWeight: 600, color: C.ink, lineHeight: 1.4 }}>{q}</span>
+                            </label>
+                            {selectedQ[i] && (
+                              <textarea rows={2} value={verifAnswers[i] || ""} onChange={(e) => setVerifAnswers({ ...verifAnswers, [i]: e.target.value })}
+                                placeholder="Votre réponse…" style={{ ...inputStyle, marginTop: 8 }} />
+                            )}
+                          </div>
+                        ))}
+                        {hasAnswer && (
+                          <Btn full icon={Sparkles} disabled={loadingSummary} onClick={generateSummary}>
+                            {loadingSummary ? "Mise à jour…" : "Mettre à jour le résumé"}
+                          </Btn>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Résumé */}
                   <div style={cardStyle}>
