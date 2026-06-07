@@ -265,6 +265,8 @@ export default function PreConsultIA() {
 
   const [summary, setSummary] = useState("");
   const [verif, setVerif] = useState(null);
+  const [verifDone, setVerifDone] = useState(false); // les questions de vérif ont déjà servi une fois
+  const [lastSnapshot, setLastSnapshot] = useState(null); // empreinte des données au moment de la génération
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [validated, setValidated] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -291,15 +293,23 @@ export default function PreConsultIA() {
     setLoadingQ(false);
   }
 
-  /* Agents Résumé + Vérification */
-  async function generateSummary() {
+  /* Empreinte des données du questionnaire (pour détecter un changement) */
+  function currentSnapshot() {
+    return JSON.stringify({
+      profil, answers, symptomes, traitements, antecedents, allergies,
+      aiAnswers,
+    });
+  }
+
+  /* Agents Résumé + Vérification.
+     isVerifUpdate = true : mise à jour via les questions de vérification (une seule fois) */
+  async function generateSummary(isVerifUpdate = false) {
     setLoadingSummary(true); setErr(""); setValidated(false); setChannel("");
     try {
       const extra = Object.entries(aiAnswers)
         .filter(([, v]) => v && v.trim())
         .map(([q, v]) => `Q: ${aiQuestions[q]} R: ${sanitize(v)}`).join("\n");
 
-      // Réponses aux questions de vérification cochées (régénération du résumé)
       const verifList = verif ? [...(verif.manquant || []), ...(verif.aVerifier || [])] : [];
       const extraVerif = Object.entries(verifAnswers)
         .filter(([, v]) => v && v.trim())
@@ -309,12 +319,22 @@ export default function PreConsultIA() {
         + (extra ? `\n\nPrécisions complémentaires:\n${extra}` : "")
         + (extraVerif ? `\n\nRéponses complémentaires du patient:\n${extraVerif}` : "");
 
-      const [s, v] = await Promise.all([
-        callAgent(PROMPTS.resume, payload),
-        callAgent(PROMPTS.verification, payload, true),
-      ]);
-      setSummary(s); setVerif(v);
-      setSelectedQ({}); setVerifAnswers({});
+      if (isVerifUpdate) {
+        // Mise à jour : on régénère seulement le résumé, sans reproposer de questions
+        const s = await callAgent(PROMPTS.resume, payload);
+        setSummary(s);
+        setVerifDone(true);
+      } else {
+        // Génération normale : résumé + questions de vérification
+        const [s, v] = await Promise.all([
+          callAgent(PROMPTS.resume, payload),
+          callAgent(PROMPTS.verification, payload, true),
+        ]);
+        setSummary(s); setVerif(v);
+        setVerifDone(false);
+        setSelectedQ({}); setVerifAnswers({});
+      }
+      setLastSnapshot(currentSnapshot());
     } catch (e) { setErr("Une erreur est survenue lors de la génération. Réessayez."); }
     setLoadingSummary(false);
   }
@@ -487,11 +507,18 @@ export default function PreConsultIA() {
                 </Btn>
                 {step < 3 ? (
                   <Btn full disabled={step === 0 && !questOk} icon={ChevronRight} onClick={() => setStep(step + 1)}>Suivant</Btn>
-                ) : (
-                  <Btn full icon={FileText} disabled={loadingSummary} onClick={() => { setScreen("summary"); generateSummary(); }}>
-                    {loadingSummary ? "Génération…" : "Générer le résumé"}
-                  </Btn>
-                )}
+                ) : (() => {
+                  const unchanged = summary && lastSnapshot && lastSnapshot === currentSnapshot();
+                  return (
+                    <Btn full icon={FileText} disabled={loadingSummary}
+                      onClick={() => {
+                        setScreen("summary");
+                        if (!unchanged) generateSummary(false);
+                      }}>
+                      {loadingSummary ? "Génération…" : (unchanged ? "Voir mon résumé" : "Générer le résumé")}
+                    </Btn>
+                  );
+                })()}
               </div>
             </section>
           )}
@@ -504,8 +531,8 @@ export default function PreConsultIA() {
 
               {!loadingSummary && summary && (
                 <>
-                  {/* Agent Vérification — le patient choisit les questions à compléter */}
-                  {verif && (verif.manquant?.length > 0 || verif.aVerifier?.length > 0) && (() => {
+                  {/* Agent Vérification — le patient choisit les questions à compléter (une seule fois) */}
+                  {!verifDone && verif && (verif.manquant?.length > 0 || verif.aVerifier?.length > 0) && (() => {
                     const verifList = [...(verif.manquant || []), ...(verif.aVerifier || [])];
                     const hasAnswer = Object.values(verifAnswers).some((v) => v && v.trim());
                     return (
@@ -531,7 +558,7 @@ export default function PreConsultIA() {
                           </div>
                         ))}
                         {hasAnswer && (
-                          <Btn full icon={Sparkles} disabled={loadingSummary} onClick={generateSummary}>
+                          <Btn full icon={Sparkles} disabled={loadingSummary} onClick={() => generateSummary(true)}>
                             {loadingSummary ? "Mise à jour…" : "Mettre à jour le résumé"}
                           </Btn>
                         )}
