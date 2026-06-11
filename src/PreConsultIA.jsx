@@ -722,7 +722,7 @@ function ScreenTitle({ icon: Icon, title, sub }) {
 function Home({ setScreen, loadDemo }) {
   const feats = [
     { icon: ClipboardList, t: "Questionnaire guidé", d: "Des questions claires, étape par étape." },
-    { icon: Sparkles, t: "4 agents IA", d: "Questions, résumé, vérification, rendez-vous." },
+    { icon: Sparkles, t: "3 agents IA", d: "Questions, résumé et vérification." },
     { icon: ShieldCheck, t: "Vous validez tout", d: "Rien n'est transmis sans votre accord." },
     { icon: Lock, t: "Confidentiel", d: "Aucune donnée nominative envoyée à l'IA." },
   ];
